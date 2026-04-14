@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+dist-electron/
+release/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Local-only config and caches
+*.local
+.cache/
+.temp/
+.tmp/
+tmp/
+temp/
+.vite/
+.eslintcache
+*.tsbuildinfo
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Optional local app data/docs
+README.md
+node_modules
