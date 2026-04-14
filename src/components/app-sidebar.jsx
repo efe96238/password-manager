@@ -1,4 +1,4 @@
-import { FolderPlus, FolderClosed, FolderOpen, Trash2 } from "lucide-react"
+import { FolderPlus, FolderClosed, FolderOpen, Trash2, KeyRound } from "lucide-react"
 import ShinyText from './ShinyText'
 import TiltedCard from './TiltedCard'
 import eklogo from "@/assets/eklogo.png"
@@ -14,7 +14,14 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 
-export function AppSidebar({ folders, onCreateFolderClick, activeFolderId, onSelectFolder, onRequestDeleteFolder }) {
+export function AppSidebar({
+  folders,
+  onCreateFolderClick,
+  activeFolderId,
+  onSelectFolder,
+  onRequestDeleteFolder,
+  onChangePasswordClick,
+}) {
   return (
     <Sidebar>
       <SidebarContent className='bg-neutral-900 h-full flex flex-col pt-7 shadow-lg shadow-black'>
@@ -91,7 +98,17 @@ export function AppSidebar({ folders, onCreateFolderClick, activeFolderId, onSel
           </SidebarGroupContent>
         </SidebarGroup>
         <div className="mt-auto">
-          <SidebarGroupLabel className='text-yellow-400 justify-start opacity-50 cursor-default'>v1.0</SidebarGroupLabel>
+          <div className="px-2 pb-2">
+            <button
+              type="button"
+              onClick={onChangePasswordClick}
+              className="w-full flex items-center gap-2 rounded-md px-2 py-2 text-sm text-yellow-400 opacity-80 hover:bg-black hover:opacity-100 transition-all duration-200 cursor-pointer"
+            >
+              <KeyRound className="size-4" />
+              <span>Change Password</span>
+            </button>
+          </div>
+          <SidebarGroupLabel className='text-yellow-400 justify-start opacity-50 cursor-default'>v2.0</SidebarGroupLabel>
         </div>
       </SidebarContent>
     </Sidebar>

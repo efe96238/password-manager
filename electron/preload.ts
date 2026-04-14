@@ -34,3 +34,10 @@ contextBridge.exposeInMainWorld("ekpm", {
   load: () => ipcRenderer.invoke("ekpm:load"),
   save: (data: unknown) => ipcRenderer.invoke("ekpm:save", data),
 })
+
+contextBridge.exposeInMainWorld("auth", {
+  getStatus: () => ipcRenderer.invoke("auth:getStatus"),
+  setup: (password: string) => ipcRenderer.invoke("auth:setup", password),
+  login: (password: string) => ipcRenderer.invoke("auth:login", password),
+  changePassword: (password: string) => ipcRenderer.invoke("auth:changePassword", password),
+})

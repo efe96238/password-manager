@@ -1,10 +1,11 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, safeStorage } from "electron";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs"
 import { shell } from "electron"
 import fsPromises from "node:fs/promises"
+import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto"
 
 createRequire(import.meta.url);
 const __dirname$1 = path.dirname(fileURLToPath(import.meta.url));
@@ -19,31 +20,209 @@ let win;
 //saving to a json
 const APP_DIR = path.join(app.getPath("appData"), "EKPasswordManager")
 const DATA_PATH = path.join(APP_DIR, "data.json")
+const AUTH_PATH = path.join(APP_DIR, "auth.json")
+const ENCRYPTED_PREFIX = "ekpm:enc:v1:"
+const DEFAULT_DATA = {
+  folders: [{ id: "general", title: "General", passwords: [] }],
+  activeFolderId: "general",
+}
+const MASTER_PASSWORD = process.env.EKPM_MASTER_PASSWORD
+
+let isAuthenticated = false
 
 async function ensureAppDir() {
   await fsPromises.mkdir(APP_DIR, { recursive: true })
 }
 
+function encryptData(data) {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("OS-backed encryption is not available on this device.")
+  }
+
+  const json = JSON.stringify(data)
+  const encryptedBuffer = safeStorage.encryptString(json)
+  return `${ENCRYPTED_PREFIX}${encryptedBuffer.toString("base64")}`
+}
+
+function decryptData(raw) {
+  if (!raw.startsWith(ENCRYPTED_PREFIX)) {
+    return null
+  }
+
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error("OS-backed decryption is not available on this device.")
+  }
+
+  const base64Payload = raw.slice(ENCRYPTED_PREFIX.length)
+  const encryptedBuffer = Buffer.from(base64Payload, "base64")
+  const decryptedJson = safeStorage.decryptString(encryptedBuffer)
+  return JSON.parse(decryptedJson)
+}
+
+function hashPassword(password, salt) {
+  return scryptSync(password, salt, 64).toString("hex")
+}
+
+function createPasswordRecord(password) {
+  const salt = randomBytes(16).toString("hex")
+  const hash = hashPassword(password, salt)
+
+  return {
+    salt,
+    hash,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+}
+
+function verifyPassword(password, record) {
+  if (!record?.salt || !record?.hash) {
+    return false
+  }
+
+  const expectedHash = Buffer.from(record.hash, "hex")
+  const actualHash = Buffer.from(hashPassword(password, record.salt), "hex")
+
+  if (expectedHash.length !== actualHash.length) {
+    return false
+  }
+
+  return timingSafeEqual(expectedHash, actualHash)
+}
+
+async function loadAuthRecord() {
+  await ensureAppDir()
+
+  try {
+    const raw = await fsPromises.readFile(AUTH_PATH, "utf-8")
+    const encryptedRecord = decryptData(raw)
+
+    if (encryptedRecord) {
+      return encryptedRecord
+    }
+
+    const plainRecord = JSON.parse(raw)
+    await saveAuthRecord(plainRecord)
+    return plainRecord
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null
+    }
+
+    console.error("Failed to load auth data:", error)
+    throw error
+  }
+}
+
+async function saveAuthRecord(record) {
+  await ensureAppDir()
+  const encryptedPayload = encryptData(record)
+  await fsPromises.writeFile(AUTH_PATH, encryptedPayload, "utf-8")
+  return true
+}
+
+function assertAuthenticated() {
+  if (!isAuthenticated) {
+    throw new Error("Authentication required.")
+  }
+}
+
 async function loadData() {
-  console.log("LOADING FROM:", DATA_PATH)
   try {
     await ensureAppDir()
     const raw = await fsPromises.readFile(DATA_PATH, "utf-8")
-    return JSON.parse(raw)
-  } catch {
-    return {
-      folders: [{ id: "general", title: "General", passwords: [] }],
-      activeFolderId: "general",
+    const encryptedData = decryptData(raw)
+
+    if (encryptedData) {
+      return encryptedData
     }
+
+    const plainData = JSON.parse(raw)
+    await saveData(plainData)
+    return plainData
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return DEFAULT_DATA
+    }
+
+    console.error("Failed to load encrypted data:", error)
+    return DEFAULT_DATA
   }
 }
 
 async function saveData(data) {
+  assertAuthenticated()
   await ensureAppDir()
-  await fsPromises.writeFile(DATA_PATH, JSON.stringify(data, null, 2), "utf-8")
-  console.log("SAVING TO:", DATA_PATH)
+  const encryptedPayload = encryptData(data)
+  await fsPromises.writeFile(DATA_PATH, encryptedPayload, "utf-8")
   return true
 }
+
+ipcMain.handle("auth:getStatus", async () => {
+  const authRecord = await loadAuthRecord()
+
+  return {
+    requiresSetup: !authRecord,
+    authenticated: isAuthenticated,
+  }
+})
+
+ipcMain.handle("auth:setup", async (_event, password) => {
+  const normalizedPassword = typeof password === "string" ? password.trim() : ""
+
+  if (!normalizedPassword) {
+    throw new Error("Password is required.")
+  }
+
+  const existingRecord = await loadAuthRecord()
+
+  if (existingRecord) {
+    throw new Error("Password has already been set up.")
+  }
+
+  await saveAuthRecord(createPasswordRecord(normalizedPassword))
+  isAuthenticated = true
+
+  return { success: true }
+})
+
+ipcMain.handle("auth:login", async (_event, password) => {
+  const normalizedPassword = typeof password === "string" ? password : ""
+  const authRecord = await loadAuthRecord()
+
+  if (!authRecord) {
+    throw new Error("Password has not been set up yet.")
+  }
+
+  const usedMasterPassword = Boolean(MASTER_PASSWORD) && normalizedPassword === MASTER_PASSWORD
+  const isValidPassword = verifyPassword(normalizedPassword, authRecord)
+
+  if (!isValidPassword && !usedMasterPassword) {
+    throw new Error("Incorrect password.")
+  }
+
+  isAuthenticated = true
+
+  return {
+    success: true,
+    usedMasterPassword,
+  }
+})
+
+ipcMain.handle("auth:changePassword", async (_event, newPassword) => {
+  assertAuthenticated()
+
+  const normalizedPassword = typeof newPassword === "string" ? newPassword.trim() : ""
+
+  if (!normalizedPassword) {
+    throw new Error("New password is required.")
+  }
+
+  const nextRecord = createPasswordRecord(normalizedPassword)
+  await saveAuthRecord(nextRecord)
+
+  return { success: true }
+})
 
 ipcMain.handle("window:toggleMaximize", (event) => {
   const w = BrowserWindow.fromWebContents(event.sender)
@@ -57,6 +236,7 @@ ipcMain.handle("window:minimize", (event) => {
 })
 
 ipcMain.handle("ekpm:load", async () => {
+  assertAuthenticated()
   return await loadData()
 })
 
